@@ -1,1 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>３Ｄブロック崩し</title>
+<script src="three.js"></script>
+<script>
+var scene, camera, renderer;                //シーン、カメラ、レンダラー
+var timer;                                  //タイマー
+var player, playerDir = new THREE.Vector3(); //プレイヤー、プレイヤーの移動方向
+var playerSpeed = 0.2;                      //プレイヤーの速さ
+var ball, ballDir = new THREE.Vector3();     //ボール、ボールの移動方向
+var ballSpeed = 0.1;                        //ボールの速さ
+var ballLight;                              //ボールのライト
+var wall = new Array(5);                    //壁（奥、左、右、上、下）
+var block = new Array();                    //ブロック
+var lineX, lineY;                           //ガイドライン
+var status = "ready";                       //ゲームステータス（ready, start, end)
+var se = new Audio();                       //効果音
 
+function init() {
+    //効果音をセット
+    se.src = "se.mp3";
+
+    //画面サイズを取得（幅と高さを補正）
+    var width = window.innerWidth - 20;     //ブラウザの横幅
+    var height = window.innerHeight - 150;  //ブラウザの高さ
+
+    //シーンの作成
+    scene = new THREE.Scene();              //シーン（３Ｄ空間）を作成する
+
+    //カメラ（画角:５０、ニアクリップ：１０，ファークリップ：１００）の作成＋配置
+    camera = new THREE.PerspectiveCamera(50, width/height, 10, 100);    //縦横比
+    camera.position.set(0, 0, 40);                                      //カメラの座標（ｘ、ｙ、ｚ）
+
+    //レンダラーの作成＋配置
+    renderer = new THREE.WebGLRenderer();                               //３Ｄグラフィックを描画するレンダラーを作成
+    renderer.setSize(width, height);
+    document.getElementById("renderArea").appendChild(renderer.domElement);
+
+    //ライト（平行光源、点光源）の作成＋配置
+    var light = new THREE.DirectionalLight("#FFFFFF");                  //白色の並行光を作成
+    light.position.set(1, 2, 1);                                        //ライトの向き
+    scene.add(light);                                                   //ライトをシーンに追加
+    ballLight = new THREE.PointLight("#FF6633", 0.5);                  //ボールといっしょに動く点光源を作成（色はオレンジ、光の強さは0.5)
+    scene.add(ballLight);
+
+    //ボールを作成
+    var geometry = new THREE.SphereGeometry(1, 16, 16);                     //ボールは半径１，分割数16の球
+    var material = new THREE.MeshPhongMaterial({color: "#FF9999", shininess:90});   //ボールの色はピンク、ボールの反射光の大きさ90
+    ball = new THREE.Mesh(geometry, material);
+    scene.add(ball);                                                    //ボールをシーンに追加
+
+    //プレイヤーを作成
+    geometry = new THREE.BoxGeometry(8, 8, 2);                          //プレイヤー（バー）は８×８×２の直方体
+    material = new THREE.MeshPhongMaterial({
+        color: "#FFCC99",                                               //バーの色（淡いオレンジ）
+        transparent: true,                                              //バーを半透明にする
+        opacity: 0.8                                                    //透明度は0.8
+    });
+    player = new THREE.Mesh(geometry, material);                        //プレイヤーを作成し、シーン井追加
+    scene.add(player);
+
+    //ガイドラインを作成
+    geometry = new THREE.BoxGeometry(0.1, 40, 0.1);                     //ガイドラインは0.1×0.1×40の直方体
+    lineX = new THREE.Mesh(geometry, material);                         //横方向のガイドラインを作成しシーンに追加
+    scene.add(lineX);
+    geometry = new THREE.BoxGeometry(40, 0.1, 0.1);
+    lineY = new THREE.Mesh(geometry, material);                         //縦方向のガイドラインを作成しシーンに追加
+    scene.add(lineY);
+
+    //壁を作成（奥、左、右、上、下）
+    material = new THREE.MeshPhongMaterial({
+        color: "#333333",                                               //壁の色（濃いグレー）
+        specular: "#FFFFFF",                                            //反射光の色（白）
+        shininess: 30                                                   //反射光の大きさ30
+    });
+    geometry = new THREE.BoxGeometry(40, 40, 0.5);                      //壁は40×40×0.5の直方体
+    wall[0] = new THREE.Mesh(geometry, material);                       //wall[0]は奥の壁
+    wall[0].position.set(0, 0, -30);
+    geometry = new THREE.BoxGeometry(0.5, 40, 40);
+    wall[1] = new THREE.Mesh(geometry, material);                       //wall[1]は左の壁
+    wall[1].position.set(-20, 0, -20);
+    wall[2] = new THREE.Mesh(geometry, material);                       //wall[2]は右の壁
+    wall[2].position.set(20, 0, -20);
+    geometry = new THREE.BoxGeometry(40, 0.5, 40);
+    wall[3] = new THREE.Mesh(geometry, material);                       //wall[3]は上の壁
+    wall[3].position.set(0, -20, -20);
+    wall[4] = new THREE.Mesh(geometry, material);                       //wall[4]は上の壁
+    wall[4].position.set(0, 20, -20);
+    for (var i=0; i<5; i++) scene.add(wall[i]);                         //5つの壁をシーンに追加
+
+    //ブロックを作成（３×３）
+    geometry = new THREE.BoxGeometry(8, 8, 4);                          //ブロック（８×８×４の直方体）
+    material = new THREE.MeshPhongMaterial({color: "#FFCC66", shininess: 90});  //ブロックの色（淡いオレンジ）、ブロックの反射光の大きさ90
+    for (var i=0; i<9; i++) {
+        block[i] = new THREE.Mesh(geometry, material);
+        block[i].position.set((i%3)*10-10, Math.floor(i/3)*10-10, -15); //ブロックを3個×３個に並べる
+        scene.add(block[i]);                                            //シーンにブロックを追加
+    }
+    
+    //描画
+    renderer.render(scene, camera);
+}
+
+function startGame() {
+    if (status == "ready") {
+        //Startボタン→Stopボタン
+        document.getElementById("start").value = "Stop";                //スタートボタンのID（229行）
+        
+        //初期化
+        status = "start";
+        ball.position.set(0, 0, 0);
+        var angle = Math.random()*Math.PI;                              //ボールが飛ぶ方向をランダムに
+        ballDir.set(Math.cos(angle), Math.sin(angle), -1);              //ボールが飛ぶz座標の方向
+        player.position.set(0, 0, 0);
+        playerDir.set(0, 0, 0);
+        for (var i=0; i<block.length; i++) block[i].visible = true;     //全てのブロックを表示する。block.length = ブロックの数9個
+
+        //ゲームスタート
+        timer = setInterval(main, 10);                                  //0.01秒ごとにmain()関数を実行
+    }  else {
+        //ゲーム終了
+        status = "end";
+    }
+}
+
+function main() {
+    //ボールの移動（Ｚ座標が10を超えるとゲーム終了）
+    ball.position.x += ballDir.x*ballSpeed;
+    ball.position.y += ballDir.y*ballSpeed;
+    ball.position.z += ballDir.z*ballSpeed;                             //ボールの座標にボールの移動方向×スピードを足す
+    if (ball.position.z > 10) status = "end";                           //ボールの座標が10以上（＝プレイヤーより手前）に来たらゲームオーバー
+
+    //ボールのライト（点光源）の移動
+    ballLight.position.set(ball.position.x, ball.position.y, ball.position.z);  //ボールのｘｙｚ座標と同じ
+
+    //ガイドラインの表示、非表示、移動
+    var check = document.getElementById("guide").checked;                       //ガイドライン表示チェックボックスのID（228行）
+    lineX.visible = check;                                                      //ガイドラインを表示、非表示
+    lineY.visible = check;
+    lineX.position.x = ball.position.x;                                         //ガイドラインの座標をボールに合わせる
+    lineY.position.y = ball.position.y;
+
+    //プレイヤーの移動
+    player.position.x += playerDir.x*playerSpeed;
+    player.position.y += playerDir.y*playerSpeed;
+    if (player.position.x < -20) player.position.x = -20;                       //プレイヤーが端にあるならそれ以上は進めないようにする
+    if (player.position.x > 20) player.position.x = 20;
+    if (player.position.y < -20) player.position.y = -20;
+    if (player.position.y > 20) player.position.y = 20;
+
+    //プレイヤーとボールのあたり判定
+    if (checkCollision(player)) ballDir.z = -1;                                 //ボールがプレイヤーに当たったならボールのZ方向を-１に
+
+    //壁とボールのあたり判定
+    if (checkCollision(wall[0])) ballDir.z = 1;
+    if (checkCollision(wall[1]) || checkCollision(wall[2])) ballDir.x *= -1;
+    if (checkCollision(wall[3]) || checkCollision(wall[4])) ballDir.y *= -1;    //ボールが当たった壁に応じてボールの飛ぶ方向を設定
+
+    //ブロックとボールのあたり判定
+    var cnt = 0;
+    for (var i=0; i<block.length; i++) {
+        if (block[i].visible) {                                                 //block[i]が表示されているなら
+           //残りのブロック数をカウント
+           cnt++;
+        
+           //ブロックとボールの衝突
+           if (checkCollision(block[i])) {                                      //衝突を調べる関数（195～207行）
+               ballDir.z *= -1;                                                 //ブロックのZ方向を反転
+               block[i].visible = false;                                        //衝突したブロックを消す
+           }
+        }
+    }
+    document.getElementById("status").innerHTML = "残りブロック: " + cnt;       //状態表示エリアのID（230行）
+
+    //ゲーム終了
+    if ((status == "end") || (cnt == 0)) {                                      //ブロックの数が０なら
+        //GAME OVER/Congratulations!の表示
+        var message = "GAME OVER";
+        if (cnt == 0) message = "Congratulations!";
+        document.getElementById("status").innerHTML += "..." + message;         //状態表示エリアのID（230行）
+
+        //タイマーの停止
+        clearInterval(timer);                                                   //121行で作成したタイマーID
+        //Stopボタン→Startボタン、ゲーム状態をreadyへ変更
+        document.getElementById("start").value = "Start";                       //スタートボタンのID（229行）
+        status = "ready";
+    }
+
+    //描画
+    renderer.render(scene, camera);                                             //カメラの位置から見たシーンを描く
+}
+
+function checkCollision(target) {                                               //target= プレイヤー、壁、またはブロック
+    //ターゲットとボールの境界を取得
+    var targetBoundary = new THREE.Box3().setFromObject(target);                //targetの境界を求める
+    var ballBoundary = new THREE.Sphere(ball.position, 1)                       //ボールの境界を求める
+    //衝突判定
+    if (targetBoundary.intersectsSphere(ballBoundary))  {                       //２つの境界が交差しているとき
+       //衝突時に効果音を再生
+       se.currentTime = 0;                                                      //効果音を最初から再生する
+       se.play();
+       return true;                                                             //ボールに何か衝突していたtrue、そうでないならfalseを返す
+    }
+    return false;
+}
+
+document.onkeydown = function(e) {                                              //eは押されたキー　event
+    //方向キーが押されたときに移動（上下左右）
+    if ((e.key == "ArrowLeft") || (e.key == "Left")) playerDir.x = -1;          //キーに応じた方向をセット
+    if ((e.key == "ArrowRight") || (e.key == "Right")) playerDir.x = 1;
+    if ((e.key == "ArrowUp") || (e.key == "Up")) playerDir.y = 1;
+    if ((e.key == "ArrowDown") || (e.key == "Down")) playerDir.y = -1;
+}
+
+document.onkeyup = function(e) {
+    //方向キーが放されたときは移動しない
+    if ((e.key == "ArrowLeft") || (e.key == "Left")) playerDir.x = 0;
+    if ((e.key == "ArrowRight") || (e.key == "Right")) playerDir.x = 0;
+    if ((e.key == "ArrowUp") || (e.key == "Up")) playerDir.y = 0;
+    if ((e.key == "ArrowDown") || (e.key == "Down")) playerDir.y = 0;
+}
+</script>
+</head>
+<body onload="init()">
+<p>3Dブロック崩し</p>
+<input type="checkbox" id="guide" cheked>ガイドライン
+<input type="button" id="start" value="Start" onclick="startGame()">
+<span id="status"></span>
+<hr>
+<div id="renderArea"></div>
+[方向キー]：バーの移動
+</body>
+</html>
